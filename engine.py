@@ -158,9 +158,85 @@ def evaluate(data_loader, model, device, use_amp=False):
         else:
             output = model(images)
             loss = criterion(output, target)
+        
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+
+        batch_size = images.shape[0]
+        metric_logger.update(loss=loss.item())
+        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+import onnxruntime as ort
+
+def evaluate_onnx(data_loader, model, device, use_amp=False):
+    criterion = torch.nn.CrossEntropyLoss()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    sess = ort.InferenceSession(model.SerializeToString(), providers=['CUDAExecutionProvider'])
+    for batch in metric_logger.log_every(data_loader, 10, header):
+        images = batch[0]
+        target = batch[-1]
+
+        images = images.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
+
+        input_name = sess.get_inputs()[0].name
+        output = sess.run([], input_feed={input_name : images.detach().cpu().numpy()})[0]
+        output = torch.from_numpy(output).to(device)
+
+        loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
+        batch_size = images.shape[0]
+        metric_logger.update(loss=loss.item())
+        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
+          .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+import numpy as np
+def accuracy_np(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    batch_size = len(target)
+    pred = np.argsort(output, axis=1)[:, ::-1][:, :5]
+    pred = pred.transpose()
+    correct = np.equal(pred, target.reshape(1, -1))
+    return [correct[:k].sum() * 100. / batch_size for k in topk]
+
+def evaluate_onnx_np(data_loader, model, device, use_amp=False):
+    criterion = torch.nn.CrossEntropyLoss()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Test:'
+
+    sess = ort.InferenceSession(model.SerializeToString(), providers=['CUDAExecutionProvider'])
+    for batch in metric_logger.log_every(data_loader, 10, header):
+        images = batch[0]
+        target = batch[-1]
+
+        images = images.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
+
+        input_name = sess.get_inputs()[0].name
+        output = sess.run([], input_feed={input_name : images.detach().cpu().numpy()})[0]
+        output = torch.from_numpy(output).to(device)
+                
+        loss = criterion(output, target)
+        output = output.detach().cpu().numpy()
+        target = target.detach().cpu().numpy()
+        acc1, acc5 = accuracy_np(output, target, topk=(1, 5))
+        
         batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)

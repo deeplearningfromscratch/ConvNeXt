@@ -94,3 +94,87 @@ def build_transform(is_train, args):
     t.append(transforms.ToTensor())
     t.append(transforms.Normalize(mean, std))
     return transforms.Compose(t)
+
+
+def build_dataset_np_transform(is_train, args):
+    transform = transforms.Compose([NP_Preprocess()])
+    print("Transform = ")
+    if isinstance(transform, tuple):
+        for trans in transform:
+            print(" - - - - - - - - - - ")
+            for t in trans.transforms:
+                print(t)
+    else:
+        for t in transform.transforms:
+            print(t)
+    print("---------------------------")
+
+    print("reading from datapath", args.data_path)
+    root = os.path.join(args.data_path, 'train' if is_train else 'val')
+    dataset = datasets.ImageFolder(root, transform=transform)
+    nb_classes = 1000
+
+    return dataset, nb_classes
+
+
+import numpy as np
+from PIL import Image
+def resize(img, size, interpolation):
+    w, h = img.size
+    if (w <= h and w == size) or (h <= w and h == size):
+        return img
+    if w < h:
+        ow = size
+        oh = int(size * h / w)
+        return img.resize((ow, oh), interpolation)
+    else:
+        oh = size
+        ow = int(size * w / h)
+        return img.resize((ow, oh), interpolation)
+
+def center_crop(img, output_size):
+    image_width, image_height = img.size
+    crop_height, crop_width = output_size, output_size
+
+    if crop_width > image_width or crop_height > image_height:
+        padding_ltrb = [
+            (crop_width - image_width) // 2 if crop_width > image_width else 0,
+            (crop_height - image_height) // 2 if crop_height > image_height else 0,
+            (crop_width - image_width + 1) // 2 if crop_width > image_width else 0,
+            (crop_height - image_height + 1) // 2 if crop_height > image_height else 0,
+        ]
+        img = img.pad(img, padding_ltrb, fill=0)  # PIL uses fill value 0
+        image_width, image_height = img.size
+        if crop_width == image_width and crop_height == image_height:
+            return img
+
+    crop_top = int(round((image_height - crop_height) / 2.))
+    crop_left = int(round((image_width - crop_width) / 2.))
+    return img.crop((crop_left, crop_top, crop_left + crop_width, crop_top + crop_height))
+    
+def normalize(img):
+    # PIL Image to numpy array
+    img = np.asarray(img, dtype=np.float32) / 255.0
+
+    if img.shape[0] != 3:
+        # transpose
+        img = np.transpose(img, (2, 0, 1))
+        
+    img -= np.asarray((0.485, 0.456, 0.406)).reshape(-1, 1, 1)
+    img /= np.asarray((0.229, 0.224, 0.225)).reshape(-1, 1, 1)
+    return img
+
+class NP_Preprocess:
+    def __call__(self, sample: Image.Image) -> np.ndarray:
+        
+        # resize image
+        crop_pct = 224 / 256
+        input_size = 224
+        size = int(input_size / crop_pct)
+        # img = sample
+        sample = resize(sample, size, Image.BICUBIC)
+        # center crop
+        sample = center_crop(sample, input_size)
+        # normalize
+        sample = normalize(sample)
+        return sample
